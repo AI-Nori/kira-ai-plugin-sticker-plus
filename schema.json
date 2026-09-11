@@ -11,6 +11,18 @@
       }
     }
   },
+  "steal_require_approval": {
+    "type": "switch",
+    "name": "Stolen emojis require approval",
+    "default": true,
+    "hint": "When on, stolen emojis land in the library disabled and must be enabled manually on the plugin page before the AI can use them. They are still auto-tagged so you can review descriptions. Can also be toggled on the plugin page.",
+    "locales": {
+      "zh": {
+        "name": "偷取表情需审核",
+        "hint": "开启后偷取的表情包入库即为禁用状态，需在插件管理页手动启用后 AI 才会使用；入库后仍会自动打标以便审核。也可在插件管理页开关。"
+      }
+    }
+  },
   "capacity": {
     "type": "integer",
     "name": "Library capacity",

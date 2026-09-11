@@ -64,6 +64,10 @@ class StealSettingRequest(BaseModel):
     steal_emoji: bool
 
 
+class StealApprovalSettingRequest(BaseModel):
+    steal_require_approval: bool
+
+
 class StickerPlusPlugin(BasePlugin):
     """Enhanced emoji library: VLM-selected sending + chat stealing + WebUI."""
 
@@ -97,6 +101,9 @@ class StickerPlusPlugin(BasePlugin):
                 emoji_dir=emoji_dir,
                 capacity=self.plugin_cfg.get("capacity", 500),
                 candidate_count=self.plugin_cfg.get("candidate_count", 9),
+                steal_require_approval=bool(
+                    self.plugin_cfg.get("steal_require_approval", True)
+                ),
             )
             await self._manager.startup()
 
@@ -305,7 +312,7 @@ class StickerPlusPlugin(BasePlugin):
         page_size: int = 60,
     ):
         manager = self._require_manager()
-        if status not in ("all", "active", "banned", "pending", "stolen"):
+        if status not in ("all", "active", "banned", "pending", "stolen", "review"):
             status = "all"
         page = max(page, 1)
         page_size = min(max(page_size, 1), 200)
@@ -395,6 +402,9 @@ class StickerPlusPlugin(BasePlugin):
         stats = await manager.stats()
         return {
             "steal_emoji": bool(self.plugin_cfg.get("steal_emoji", True)),
+            "steal_require_approval": bool(
+                self.plugin_cfg.get("steal_require_approval", True)
+            ),
             "capacity": manager.capacity,
             "candidate_count": manager.candidate_count,
             "max_emoji_size_mb": float(self.plugin_cfg.get("max_emoji_size_mb", 5.0)),
@@ -417,3 +427,24 @@ class StickerPlusPlugin(BasePlugin):
             PLUGIN_ID, {"steal_emoji": bool(request.steal_emoji)}
         )
         return {"steal_emoji": bool(updated.get("steal_emoji", request.steal_emoji))}
+
+    @register.api(method="PUT", path="/settings/steal-approval")
+    async def set_steal_approval(self, request: StealApprovalSettingRequest):
+        """Toggle review-before-use for stolen emojis (they then land banned).
+
+        Same persistence pattern as set_steal: update_plugin_config
+        re-initializes this plugin instance, so build the response from
+        locals only - do not touch self afterwards.
+        """
+        plugin_mgr = getattr(self.ctx, "plugin_mgr", None)
+        if plugin_mgr is None or not plugin_mgr.has_plugin(PLUGIN_ID):
+            raise HTTPException(status_code=503, detail="Plugin manager not available")
+        updated = await plugin_mgr.update_plugin_config(
+            PLUGIN_ID,
+            {"steal_require_approval": bool(request.steal_require_approval)},
+        )
+        return {
+            "steal_require_approval": bool(
+                updated.get("steal_require_approval", request.steal_require_approval)
+            )
+        }

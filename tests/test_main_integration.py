@@ -145,6 +145,9 @@ async def test_steal_hook_stores_sticker(plugin):
     items, total = await plugin._manager.list_emojis()
     assert total == 1
     assert items[0]["source"] == "stolen"
+    # default config: stolen emojis land banned pending manual review
+    assert items[0]["is_banned"] is True
+    assert items[0]["needs_review"] is True
 
 
 @pytest.mark.asyncio
@@ -189,6 +192,9 @@ async def test_settings_expose_split_models(plugin):
     settings = await plugin.get_settings()
     assert settings["vlm_model"] == ""
     assert settings["selection_model"] == ""
+    # approval toggle defaults to on (stolen emojis land disabled)
+    assert settings["steal_require_approval"] is True
+    assert plugin._manager._steal_require_approval is True
 
 
 @pytest.mark.asyncio
