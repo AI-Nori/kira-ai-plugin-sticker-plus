@@ -67,6 +67,11 @@ SEND_RECORD_WAIT_TIMEOUT = 10.0
 # event was stopped mid-send) are pruned after this many seconds.
 PENDING_RECORD_MAX_AGE = 60.0
 
+# Grace period on shutdown: in-flight background sends are awaited (not
+# cancelled) for at most this long before components are torn down, so
+# stickers already scheduled still go out without blocking shutdown forever.
+BG_SEND_SHUTDOWN_GRACE = 15.0
+
 STICKER_PLUS_TAG_DESCRIPTION = (
     "<sticker_plus>情绪</sticker_plus> # 发送一个表情包消息用于情绪表达，"
     "在闲聊、调侃、被调侃等场景推荐使用。填入当前语境最贴切的情绪关键词，"
@@ -162,11 +167,25 @@ class StickerPlusPlugin(BasePlugin):
         await self._shutdown_components()
 
     async def _shutdown_components(self) -> None:
-        # Pending records die with this instance (hot reload boundary); the
-        # in-flight background sends are left alone - the event loop keeps
-        # them alive until they finish, so stickers already scheduled still
-        # go out through the shared ctx.
+        # Pending records die with this instance (hot reload boundary).
         self._pending_sends.clear()
+        # Give in-flight background sends a bounded grace period instead of
+        # cancelling them: a sticker already scheduled should still go out,
+        # and its task keeps using the (snapshot) manager and the database
+        # below, so those must not be disposed underneath it. Tasks that
+        # exceed the grace period are left running (same design as above);
+        # their pick/send may then fail against torn-down resources, which
+        # the task's own exception handling records as a failed send.
+        if self._bg_sends:
+            done, still_running = await asyncio.wait(
+                set(self._bg_sends), timeout=BG_SEND_SHUTDOWN_GRACE
+            )
+            if still_running:
+                logger.warning(
+                    "%d sticker_plus background send(s) still running after %.0fs grace; "
+                    "continuing shutdown",
+                    len(still_running), BG_SEND_SHUTDOWN_GRACE,
+                )
         if self._stealer is not None:
             try:
                 await self._stealer.shutdown()
