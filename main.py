@@ -171,9 +171,7 @@ class StickerPlusPlugin(BasePlugin):
     @register.tool(
         name="send_emoji",
         description=(
-            "发送一个表情包消息。根据当前聊天语境选择一个情绪关键词，"
-            "表情包会由系统自动挑选并随消息发出。"
-            "可单独作为一条消息或与文字消息一起发送。"
+            "发送一个表情包消息用于情绪表达，在闲聊、调侃、被调侃等场景推荐使用。"
         ),
         params={
             "type": "object",
