@@ -265,7 +265,16 @@ class StickerPlusPlugin(BasePlugin):
             logger.warning("sticker_plus skipped: emoji library not initialized")
             return
         pending = _PendingStickerSend()
-        bucket = [p for p in self._pending_sends.get(sid, []) if p.age_ok()]
+        # Prune every sid's bucket, not just this one: a turn interrupted
+        # before its step-result hook never pops its bucket, so without a
+        # sweep the dict keys would accumulate forever.
+        for b_sid, records in list(self._pending_sends.items()):
+            records = [p for p in records if p.age_ok()]
+            if records:
+                self._pending_sends[b_sid] = records
+            else:
+                self._pending_sends.pop(b_sid, None)
+        bucket = self._pending_sends.get(sid, [])
         bucket.append(pending)
         self._pending_sends[sid] = bucket
         task = asyncio.create_task(
@@ -282,8 +291,13 @@ class StickerPlusPlugin(BasePlugin):
         Runs detached from the main model's turn; the step-result hook waits
         on ``pending.done`` to attach the outcome to the assistant message.
         """
+        # Snapshot the manager: a shutdown or hot reload may clear or replace
+        # self._manager while this detached task is still running; the send
+        # then finishes against the library instance it was scheduled with
+        # (by design, in-flight sends are left alone on shutdown).
+        manager = self._manager
         try:
-            picked = await self._manager.pick_emoji(emotion, recent_context)
+            picked = await manager.pick_emoji(emotion, recent_context)
             if picked is None:
                 pending.ok = False
                 pending.detail = "表情包库中没有合适的表情"
@@ -328,13 +342,21 @@ class StickerPlusPlugin(BasePlugin):
         if not pending_list:
             return
         lines = []
+        # One deadline for the whole batch: per-record timeouts would multiply
+        # into len(pending_list) * SEND_RECORD_WAIT_TIMEOUT in the worst case.
+        deadline = asyncio.get_running_loop().time() + SEND_RECORD_WAIT_TIMEOUT
         for pending in pending_list:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                logger.warning(
+                    "sticker_plus send not settled within %.0fs; record skipped",
+                    SEND_RECORD_WAIT_TIMEOUT,
+                )
+                continue
             try:
                 # Wait on the event, not the task: on timeout the task keeps
                 # running and the sticker still goes out.
-                await asyncio.wait_for(
-                    pending.done.wait(), timeout=SEND_RECORD_WAIT_TIMEOUT
-                )
+                await asyncio.wait_for(pending.done.wait(), timeout=remaining)
             except asyncio.TimeoutError:
                 logger.warning(
                     "sticker_plus send not settled within %.0fs; record skipped",
